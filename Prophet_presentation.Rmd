@@ -1,0 +1,164 @@
+---
+title: "Prophet for Forecasting"
+author: "Andrew Fraijo"
+date: "March 25, 2020"
+output:
+  powerpoint_presentation:
+    reference_doc: C:\Users\andrewfraijo\Documents\Practice Work\Presentation_Template.pptx
+  slidy_presentation: default
+  ioslides_presentation: default
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r Data, include = FALSE}
+library(tidyverse)
+library(readr)
+library(lubridate)
+library(tsibble)
+set.seed(8675309)
+
+##bring in data and mutate it
+data <- tsibbledata::vic_elec
+data <- data %>% select(Time, Demand) %>% as_tibble()
+data <- data %>% mutate(ds = cut.POSIXt(Time, "day"))
+Elect_dem <- data %>% select(ds, Demand) %>% group_by(ds) %>% summarise(y = sum(Demand))
+Elect_dem <- Elect_dem %>% ungroup()
+Elect_dem <- Elect_dem %>% mutate(ds = ymd(as.character(ds)))
+rm(data)
+```
+
+## Prophet
+
+Prophet is a forecasting tool, created and released by Facebook, available for both R and Python. It is a powerful tool for automatically forecasting time-series. It also allows an analyst to be explicit about various parameters thus tailoring the process when prior information is available.
+
+## What makes Prophet different?
+
+- Other automatic forecasting functions in R (such as *auto.arima()* and *ets()*) assume structure between the observations of a time series
+- An ARIMA model, for example, assumes specific structure between the observations, i.e. auto-regression and a moving average 
+- The model Prophet uses does not make that assumption. Instead, Prophet models what is essentially a Bayesian Generalized Additive Model (GAM), fitting curves to the trend and various seasonality levels, and then uses STAN to find the posterior
+
+## Benefits of Prophet
+
+- No need for regularly spaced observations!
+- Fast model building! This allows analysts to continually update the models based on new information
+- Flexibility, including specificying multiple levels of seasonality (yearly, quarterly, weekly, daily, etc.)
+
+## Cool, but how do I use it?
+
+Prophet can be very simple to use. Below we fit a model on the daily electricity demand in Victoria, Australia from 2012-1-1 to 2014-12-31. Prophet simply asks for a data frame with a date (or date-time) column, called *ds*, and an observation column, called *y*. That's it:
+
+```{r Auto_fit, echo = TRUE, message = FALSE, warning = FALSE}
+library(prophet)
+Elect_auto <- prophet(Elect_dem) 
+future <- make_future_dataframe(Elect_auto, periods = 31, freq = 'day')
+Elect_auto_fcast <- predict(Elect_auto, future)
+```
+
+## Cool, but how do I use it? Pt 2
+
+Prophet will then let us look at the fit of the components (trend and seasonality) in a ggplot object
+```{r Auto_comp, echo = TRUE, message = FALSE, warning = FALSE}
+prophet_plot_components(Elect_auto,Elect_auto_fcast) 
+```
+
+## Cool, but how do I use it? Pt 3
+
+Finally, we can plot the forecast and see how well it fits
+```{r Auto_fcast, echo = TRUE, message = FALSE, warning = FALSE}
+plot(Elect_auto,Elect_auto_fcast, xlabel = "Date-Time", ylabel = "Daily Demand (kW)") +
+  labs(title = "Hourly Electricity Demand In Victoria, Australia",
+       subtitle = "With Auto-generated Forecast")
+```
+
+## Holidays!
+
+Holidays often distort time-series. Prophet can account for holidays in two separate ways. First, a column can be added to the data frame explicitly listing when a day is a holiday. Second, is a function that adds known national holidays to the model. Here we use the latter option while being more verbose in the modeling statement.
+
+```{r Holiday, echo = TRUE, message = FALSE, warning = FALSE}
+Elect_1 <- prophet(growth = "linear", yearly.seasonality = 'auto', weekly.seasonality = 'auto', daily.seasonality = FALSE)
+Elect_1 <- add_country_holidays(Elect_1, country_name = "AU")
+Elect_1 <- fit.prophet(Elect_1, Elect_dem)
+Elect_1_fcast <- predict(Elect_1, future)
+```
+
+## Holidays! Pt 2
+```{r Holiday_comp, echo = FALSE}
+prophet_plot_components(Elect_1,Elect_1_fcast) 
+```
+
+## Holidays! Pt 3
+```{r Holiday_fcast, echo = FALSE}
+plot(Elect_1,Elect_1_fcast, xlabel = "Date-Time", ylabel = "Daily Demand (kW)") +
+  labs(title = "Hourly Electricity Demand In Victoria, Australia",
+       subtitle = "With Auto-generated Forecast")
+```
+
+## Seasonality type
+Prophet's default assumption is that seasonlity is additive. However, that can be changed to multiplicative
+```{r Seaonality, echo = TRUE, message = FALSE, warning = FALSE}
+Elect_2 <- prophet(growth = "linear", yearly.seasonality = 'auto', weekly.seasonality = 'auto', daily.seasonality = FALSE,
+                   seasonality.mode = 'multiplicative')
+Elect_2 <- add_country_holidays(Elect_2, country_name = "AU") 
+Elect_2 <- fit.prophet(Elect_2, Elect_dem)
+Elect_2_fcast <- predict(Elect_2, future)
+```
+
+## Seasonality Type Pt 2
+```{r seasonality_comp, echo = FALSE}
+prophet_plot_components(Elect_2,Elect_2_fcast) 
+```
+
+## Seasonality Type Pt 3
+```{r seasonality_fcast, echo = FALSE}
+plot(Elect_2,Elect_2_fcast, xlabel = "Date-Time", ylabel = "Daily Demand (kW)") +
+  labs(title = "Hourly Electricity Demand In Victoria, Australia",
+       subtitle = "With Auto-generated Forecast") 
+```
+
+## Full Bayesian
+The default option in Prophet is to use maximum a posteriori (MAP) estimation to determine the posterior for the forecast. This allows for approximating the uncertaintity in trend and noise but not in the seasonality. To do that the user must explicitly call for MCMC sampling to do a full Bayesian estimation. In general the number of samples should be at least 1000, which may take some time to perform. For this example a smaller number is used.
+
+## Full Bayesian Pt 2
+
+- The *interval.width* variable defaults to 0.8 and determines the width of error bar of the forecast
+-The *uncertainty.samples* tells Prophet how many simulations to perform to calculate the forecast uncertainty and defaults to 1000. Lowering this number increases the uncertainty in the prediction while speeding up the calculation
+
+```{r MCMC, echo = TRUE, message = FALSE, warning = FALSE, results = 'hide'}
+Elect_3 <- prophet(growth = "linear", yearly.seasonality = 'auto', weekly.seasonality = 'auto', daily.seasonality = FALSE,
+                   seasonality.mode = 'multiplicative', mcmc.samples = 500, interval.width = .9, uncertainty.samples = 1000)
+Elect_3 <- add_country_holidays(Elect_3, country_name = "AU") 
+Elect_3 <- fit.prophet(Elect_3, Elect_dem)
+Elect_3_fcast <- predict(Elect_3, future)
+```
+
+## Full Bayesian Pt 3
+```{r mcmc_comp, echo = FALSE}
+prophet_plot_components(Elect_3,Elect_3_fcast) 
+```
+
+## Full Bayesian Pt 4
+```{r mcmc_fcast, echo = FALSE}
+plot(Elect_3,Elect_3_fcast, xlabel = "Date-Time", ylabel = "Daily Demand (kW)") +
+  labs(title = "Hourly Electricity Demand In Victoria, Australia",
+       subtitle = "With Auto-generated Forecast")
+```
+
+## What has not been covered
+- Using a logistic growth model. This is particularly useful when there is a clear cap on how large, or small, a series can grow
+- Monthly, Daily, and Subdaily seasonality
+- User-defined holidays
+- Change points
+- Additional regressors
+- User-defined Priors
+- Diagnostics using Cross-validation and *performance_metrics* function
+
+
+## More information
+
+- Prophet Homepage: <https://facebook.github.io/prophet/>
+- Using Prophet with Fable tidy time-series analysis: <https://github.com/mitchelloharawild/fable.prophet>
+- Gist containing the code from this presentation: <https://gist.github.com/AFraijo/b8f4c05baa693f2ae9b1a159651cf754>
+
