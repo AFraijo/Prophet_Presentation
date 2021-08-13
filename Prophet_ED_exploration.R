@@ -12,7 +12,7 @@ data %>%
   geom_smooth()+
   labs(title = "Hourly Electricity Demand In Victoria, Australia",
        x = "Date-Time",
-       y = "Daily Demand (kW)") +
+       y = "Hourly Demand (kW)") +
   theme_bw()
 
 
